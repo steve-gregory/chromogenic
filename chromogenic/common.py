@@ -30,7 +30,7 @@ def inject_atmo_key(mounted_path, ssh_dir="root/.ssh/"):
     if not os.path.isdir(ssh_dir):
         os.makedirs(ssh_dir)
     auth_key_file = "%s/authorized_keys" % ssh_dir
-    ssh_key = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQDVVkgGS8QwHet+aF401l6MLD206yfE76Pe8UAbWhKdE1155IHyDumS5226cTf+5/1zqyzlGwvHJMhzJEztImJghXAWMw7AOzDUYmIpGGhnvmVE1mJN6Iy3aRDyJOcPOqd1ZGbywzzQioiYjoxKa/HT5QN5F/4Mdsqn3mgFdWgXxmY7X3fZGphk5vOK/8J8tSpy4dLIBI+WRrN4ZR7IOrvzkZght/YjtvgPhJqZzgEzcTP4BMpUNWlOFL95Usk3lzqJTBDzlM71ivaHQ3OqxrjpThMSGoQhedupsx8FrmBvOo1OxjfIj0/hIEtjH9FE2lc5GZBy7B1EuqXApR7Vopa3 atmo@iplantcollaborative.org"
+    ssh_key = "ssh-rsa AAAAB3NzaC1yc2EAAAADAQABAAABAQCliBnVDdn4GgGJM7fMkuhW9NR1FCl9qGO2aOOQNcLNM3spP3VWKGquRNNJ2R6/1pHbZLPc8C6g90wjMSvMCoxfUmB2dYOvoX9JPLeO+NmhcN7r6PNZBPz8HGgIRifs9vQJwSg43Zwl1ZLno0KU33bi3oG3YOXGNDpcuSfpoCSqwMoEjqviPgx+MHssoEZktEeMUMuLVwSFxki3NtlYISz8CsxjgWg+BOETfxz78uMsVMhbhQXe1b4wCLQGINCIJ+7IAmMtY3d5QFoR3UjwaXcP8XxEhokYU5hL8wDGo2nFVN7gTryl5HcHDtSS4VKQJwfVLAMbwMw5Hj6IGcaj4BeP root@jaa1"
     ssh_key_template = """#Injected by Chromogenic
 %s
 """ % ssh_key
