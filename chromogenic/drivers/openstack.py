@@ -56,7 +56,7 @@ class ImageManager(BaseDriver):
         """
         identity_version = self.creds.get('identity_version', 'v2.0')
 
-        if '3' in identity_version or 3 in identity_version:
+        if '3' in identity_version or identity_version == 3:
             return self.keystone.projects
         return self.keystone.tenants
 
@@ -112,6 +112,11 @@ class ImageManager(BaseDriver):
             creds['auth_url'] = creds['auth_url'].replace('/tokens','')
         else:
             creds['auth_url'] += "/v2.0/"
+        auth_version = creds.get('ex_force_auth_version', '2.0_password')
+        if '2' in auth_version:
+            creds['version'] = 'v2.0'
+        elif '3' in auth_version:
+            creds['version'] = 'v3'
         return creds
 
     def __init__(self, *args, **kwargs):
@@ -119,7 +124,7 @@ class ImageManager(BaseDriver):
             raise KeyError("Credentials missing in __init__. ")
 
         admin_args = kwargs.copy()
-        auth_version = kwargs.get('version')
+        auth_version = kwargs.get('ex_force_auth_version','2.0_password')
         if '2' in auth_version:
             if '/v2.0/tokens' not in admin_args['auth_url']:
                 admin_args['auth_url'] += '/v2.0/tokens'
@@ -132,13 +137,17 @@ class ImageManager(BaseDriver):
     def _parse_download_location(self, server, image_name, **kwargs):
         download_location = kwargs.get('download_location')
         download_dir = kwargs.get('download_dir')
-        domain_id = kwargs.pop('domain_id', 'default')
+        identity_version = self.creds.get('version','v2.0')
+        list_args = {}
+        if '3' in identity_version:
+            domain_id = kwargs.pop('domain', 'default')
+            list_args['domain_id'] = domain_id
         if not download_dir and not download_location:
             raise Exception("Could not parse download location. Expected "
                             "'download_dir' or 'download_location'")
         elif not download_location:
             #Use download dir & tenant_name to keep filesystem order
-            tenant = find(self.keystone_tenants_method(), id=server.tenant_id, domain_id=domain_id)
+            tenant = find(self.keystone_tenants_method(), id=server.tenant_id, **list_args)
             local_user_dir = os.path.join(download_dir, tenant.name)
             if not os.path.exists(os.path.dirname(local_user_dir)):
                 os.makedirs(local_user_dir)
@@ -201,18 +210,26 @@ class ImageManager(BaseDriver):
 
         #Step 3: Upload the local copy as a 'real' image
         # with seperate kernel & ramdisk
+        if hasattr(snapshot, 'properties'):  # Treated as an obj.
+            properties = snapshot.properties
+            properties.update({
+                'container_format': snapshot.container_format,
+                'disk_format': snapshot.disk_format,
+            })
+        elif hasattr(snapshot, 'items'):  # Treated as a dict.
+            properties = dict(snapshot.items())
         upload_args = self.parse_upload_args(image_name, download_location,
-                                             kernel_id=snapshot.properties.get('kernel_id'),
-                                             ramdisk_id=snapshot.properties.get('ramdisk_id'),
-                                             disk_format=snapshot.disk_format,
-                                             container_format=snapshot.container_format,
+                                             kernel_id=properties.get('kernel_id'),
+                                             ramdisk_id=properties.get('ramdisk_id'),
+                                             disk_format=properties.get('disk_format'),
+                                             container_format=properties.get('container_format'),
                                              **kwargs)
 
         new_image = self.upload_local_image(**upload_args)
 
         if not kwargs.get('keep_image',False):
             wildcard_remove(download_dir)
-            snapshot.delete()
+            self.delete_images(image_id=snapshot.id)
 
         return new_image
 
@@ -292,8 +309,12 @@ class ImageManager(BaseDriver):
         #Step 2: Create local path for copying image
         server = self.get_server(instance_id)
         if server:
-            domain_id = kwargs.pop('domain_id', 'default')
-            tenant = find(self.keystone_tenants_method(), id=server.tenant_id, domain_id=domain_id)
+            identity_version = self.creds.get('version','v2.0')
+            list_args = {}
+            if '3' in identity_version:
+                domain_id = kwargs.pop('domain', 'default')
+                list_args['domain_id'] = domain_id
+            tenant = find(self.keystone_tenants_method(), id=server.tenant_id, **list_args)
         else:
             tenant = None
         ss_prefix = kwargs.get('ss_prefix',
@@ -347,13 +368,13 @@ class ImageManager(BaseDriver):
     def _perform_download(self, image_id, download_location):
         image = self.get_image(image_id)
         #Step 2: Download local copy of snapshot
-        logger.debug("Image downloading to %s" % download_location)
+        logger.debug("Downloading Image %s: %s" % (image_id, download_location))
         if not os.path.exists(os.path.dirname(download_location)):
             os.makedirs(os.path.dirname(download_location))
         with open(download_location,'w') as f:
-            for chunk in image.data():
+            for chunk in self.glance.images.data(image_id):
                 f.write(chunk)
-        logger.debug("Image downloaded to %s" % download_location)
+        logger.debug("Download Image %s Completed: %s" % (image_id, download_location))
         return download_location
 
     def upload_image(self, image_name, image_path, **upload_args):
@@ -365,18 +386,19 @@ class ImageManager(BaseDriver):
     def upload_local_image(self, image_name, image_path,
                      container_format='ovf',
                      disk_format='raw',
-                     is_public=True, private_user_list=[], properties={}):
+                     is_public=True, private_user_list=[], **extras):
         """
         Upload a single file as a glance image
-        Defaults ovf/raw are correct for a eucalyptus .img file
+        'extras' kwargs will be passed directly to glance.
         """
         logger.debug("Saving image %s - %s" % (image_name, image_path))
-        new_image = self.glance.images.create(name=image_name,
-                                             container_format=container_format,
-                                             disk_format=disk_format,
-                                             is_public=is_public,
-                                             properties=properties,
-                                             data=open(image_path))
+        new_image = self.glance.images.create(
+            name=image_name,
+            container_format=container_format,
+            disk_format=disk_format,
+            visibility="public" if is_public else "private",
+            data=image_path)
+        # ASSERT: New image ID now that 'the_file' has completed the upload
         logger.debug("New image created: %s - %s" % (image_name, new_image.id))
         for tenant_name in private_user_list:
             share_image(new_image,tenant_name)
@@ -437,7 +459,7 @@ class ImageManager(BaseDriver):
         if len(images) == 0:
             return False
         for image in images:
-            self.glance.images.delete(image)
+            self.glance.images.delete(image.id)
 
         return True
 
@@ -634,8 +656,12 @@ class ImageManager(BaseDriver):
         """
         Share an image with tenant_name
         """
-        domain_id = kwargs.pop('domain_id', 'default')
-        tenant = self.find_tenant(tenant_name, domain_id=domain_id)
+        identity_version = self.creds.get('version','v2.0')
+        list_args = {}
+        if '3' in identity_version:
+            domain_id = kwargs.pop('domain', 'default')
+            list_args['domain_id'] = domain_id
+        tenant = self.find_tenant(tenant_name, **list_args)
         if not tenant:
             raise Exception("No tenant named %s" % tenant_name)
         return self.glance.image_members.create(image.id, tenant.id)
@@ -644,8 +670,12 @@ class ImageManager(BaseDriver):
         """
         Remove a shared image with tenant_name
         """
-        domain_id = kwargs.pop('domain_id', 'default')
-        tenant = find(self.keystone_tenants_method(), name=tenant_name, domain_id=domain_id)
+        identity_version = self.creds.get('version','v2.0')
+        list_args = {}
+        if '3' in identity_version:
+            domain_id = kwargs.pop('domain', 'default')
+            list_args['domain_id'] = domain_id
+        tenant = find(self.keystone_tenants_method(), name=tenant_name, **list_args)
         return self.glance.image_members.delete(image.id, tenant.id)
 
     #Alternative image uploading
@@ -682,7 +712,8 @@ class ImageManager(BaseDriver):
           True = Public images ONLY
          False = Private images ONLY
         """
-        # Same call..
+        # NOTE: now that glance has moved away from is_public
+        # this 'feature' may not be necessary.
         is_public = None
         if 'is_public' in kwargs:
             is_public = kwargs.pop('is_public')
@@ -711,8 +742,12 @@ class ImageManager(BaseDriver):
 
     def find_tenant(self, tenant_name, **kwargs):
         try:
-            domain_id = kwargs.pop('domain_id', 'default')
-            tenant = find(self.keystone_tenants_method(), name=tenant_name, domain_id=domain_id)
+            identity_version = self.creds.get('version','v2.0')
+            list_args = {}
+            if '3' in identity_version:
+                domain_id = kwargs.pop('domain', 'default')
+                list_args['domain_id'] = domain_id
+            tenant = find(self.keystone_tenants_method(), name=tenant_name, **list_args)
             return tenant
         except NotFound:
             return None
