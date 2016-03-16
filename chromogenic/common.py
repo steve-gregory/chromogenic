@@ -3,6 +3,7 @@ import os
 import re
 import subprocess
 import logging
+from chromogenic.settings import chromo_settings
 
 logger = logging.getLogger(__name__)
 
@@ -24,9 +25,10 @@ def touch_file(file_path):
     with open(file_path, 'a'):
         os.utime(file_path, None)
 
+
 def inject_atmo_key(mounted_path, ssh_dir="root/.ssh/"):
-    #Ensure SSH Directory exists
-    ssh_dir = os.path.join(mounted_path,ssh_dir)
+    # Ensure SSH Directory exists
+    ssh_dir = os.path.join(mounted_path, ssh_dir)
     if not os.path.isdir(ssh_dir):
         os.makedirs(ssh_dir)
     auth_key_file = "%s/authorized_keys" % ssh_dir
@@ -37,6 +39,7 @@ def inject_atmo_key(mounted_path, ssh_dir="root/.ssh/"):
 
     mounted_auth_key_file = os.path.join(mounted_path, auth_key_file)
     write_file(mounted_auth_key_file, ssh_key_template)
+
 
 def inject_denyhosts_file(mounted_path, denyhosts_file="var/lib/denyhosts/allowed-hosts"):
     """
